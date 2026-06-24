@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+argon2 = { version = "0.5.3", features = ["rand"] }
 color-eyre = "0.6.5"
+password-hash = "0.6.1"
+rand = "0.8"
 tokio = { version = "1.52.3", features = ["full"] }
