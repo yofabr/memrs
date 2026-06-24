@@ -3,7 +3,7 @@ use color_eyre::Result;
 use rand::rngs::OsRng;
 use std::env;
 
-type Int = i32;
+type Int = u16;
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
@@ -20,7 +20,7 @@ impl Config {
         };
 
         if let Ok(port) = env::var("PORT") {
-            config.port = port.parse::<i32>().unwrap();
+            config.port = port.parse::<u16>().unwrap();
         }
         if let Ok(password) = env::var("PASSWORD") {
             config.password = hash_password(&password).unwrap_or_default();
