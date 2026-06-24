@@ -50,6 +50,9 @@ pub fn hash_password(pass: &str) -> Result<String> {
 
 /// Verifies a plaintext password against an Argon2id hash string.
 pub fn verify_password(pass: &str, hashed: &str) -> bool {
+    if hashed.is_empty() {
+        return true;
+    }
     let parsed_hash = match PasswordHash::new(hashed) {
         Ok(h) => h,
         Err(_) => return false,
