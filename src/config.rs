@@ -16,8 +16,8 @@ type Int = u16;
 /// Server configuration loaded from environment variables.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
-    port: Int,
-    password: String,
+    pub port: Int,
+    pub password: String,
     // size:
 }
 
