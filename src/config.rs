@@ -33,32 +33,33 @@ impl Config {
             config.port = port.parse::<u16>().unwrap();
         }
         if let Ok(password) = env::var("PASSWORD") {
-            config.password = hash_password(&password).unwrap_or_default();
+            config.password = Config::hash_password(&password).unwrap_or_default();
         }
         config
     }
-}
 
-/// Hashes a plaintext password using Argon2id with a random salt.
-pub fn hash_password(pass: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
+    /// Hashes a plaintext password using Argon2id with a random salt.
+    pub fn hash_password(pass: &str) -> Result<String> {
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
 
-    let password_hash = argon2.hash_password(pass.as_bytes(), &salt).unwrap();
-    Ok(password_hash.to_string())
-}
-
-/// Verifies a plaintext password against an Argon2id hash string.
-pub fn verify_password(pass: &str, hashed: &str) -> bool {
-    if hashed.is_empty() {
-        return true;
+        let password_hash = argon2.hash_password(pass.as_bytes(), &salt).unwrap();
+        Ok(password_hash.to_string())
     }
-    let parsed_hash = match PasswordHash::new(hashed) {
-        Ok(h) => h,
-        Err(_) => return false,
-    };
 
-    Argon2::default()
-        .verify_password(pass.as_bytes(), &parsed_hash)
-        .is_ok()
+    /// Verifies a plaintext password against an Argon2id hash string.
+    pub fn verify_password(&self, pass: &str) -> bool {
+        let hashed = &self.password;
+        if hashed.is_empty() {
+            return true;
+        }
+        let parsed_hash = match PasswordHash::new(hashed) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        Argon2::default()
+            .verify_password(pass.as_bytes(), &parsed_hash)
+            .is_ok()
+    }
 }
