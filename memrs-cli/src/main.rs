@@ -1,6 +1,7 @@
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::env;
+use std::io::Write;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -13,7 +14,11 @@ fn print_help() {
     println!("  \x1b[33mCONNECT <host> <port>\x1b[0m       → Connect to a different server");
     println!("  \x1b[33mEXIT\x1b[0m / \x1b[33mQUIT\x1b[0m               → Disconnect and exit");
     println!();
-    println!("\x1b[90mUse \x1b[0m\x1b[90m↑/↓\x1b[0m\x1b[90m for history, \x1b[0m\x1b[90mTab\x1b[0m\x1b[90m for completion.\x1b[0m");
+    println!("\x1b[90m  -a, --auth <password>  authenticate on connect\x1b[0m");
+    println!("\x1b[90m  -h, --host <host>      server host (default 127.0.0.1)\x1b[0m");
+    println!("\x1b[90m  -p, --port <port>      server port (default 7898)\x1b[0m");
+    println!();
+    println!("\x1b[90mUse \x1b[0m\x1b[90m↑/↓\x1b[0m\x1b[90m for history.\x1b[0m");
 }
 
 fn format_response(raw: &str) -> String {
@@ -31,9 +36,10 @@ fn format_response(raw: &str) -> String {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let (mut host, mut port, cmd_args) = parse_args(&args);
+    let (mut host, mut port, mut password, cmd_args) = parse_args(&args);
 
     let (mut writer, mut buf_reader) = connect(&host, &port).await?;
+    auto_auth(&mut writer, &mut buf_reader, &password).await;
 
     // --- one-shot mode ---
     if !cmd_args.is_empty() {
@@ -54,6 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\x1b[1;34m  ╔══════════════════════════════════╗\x1b[0m");
     println!("\x1b[1;34m  ║      \x1b[1;37m memrs-cli v0.1.0 \x1b[1;34m      ║\x1b[0m");
     println!("\x1b[1;34m  ║    \x1b[1;37mConnected to {}:{}\x1b[1;34m   ║\x1b[0m", host, port);
+    if !password.is_empty() {
+        println!("\x1b[1;34m  ║   \x1b[1;32m Authenticated       \x1b[1;34m   ║\x1b[0m");
+    }
     println!("\x1b[1;34m  ╚══════════════════════════════════╝\x1b[0m");
     println!("\x1b[90mType HELP for available commands.\x1b[0m");
 
@@ -81,7 +90,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     "CLEAR" => {
                         print!("\x1b[2J\x1b[1;1H");
-                        use std::io::Write;
                         let _ = std::io::stdout().flush();
                         continue;
                     }
@@ -90,13 +98,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if trimmed.starts_with("CONNECT ") {
                     let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                    if parts.len() == 3 {
+                    if parts.len() >= 3 {
                         host = parts[1].to_string();
                         port = parts[2].to_string();
+                        password = parts.get(3).map(|s| s.to_string()).unwrap_or_default();
                         match connect(&host, &port).await {
                             Ok((w, r)) => {
                                 writer = w;
                                 buf_reader = r;
+                                auto_auth(&mut writer, &mut buf_reader, &password).await;
                                 println!("\x1b[32mConnected to {}:{}\x1b[0m", host, port);
                             }
                             Err(e) => {
@@ -104,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     } else {
-                        println!("\x1b[31mUsage: CONNECT <host> <port>\x1b[0m");
+                        println!("\x1b[31mUsage: CONNECT <host> <port> [password]\x1b[0m");
                     }
                     continue;
                 }
@@ -131,6 +141,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn auto_auth(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    buf_reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    password: &str,
+) {
+    writer.write_all(b"AUTH ").await.unwrap();
+    writer.write_all(password.as_bytes()).await.unwrap();
+    writer.write_all(b"\r\n").await.unwrap();
+    let mut line = String::new();
+    buf_reader.read_line(&mut line).await.unwrap();
+    let line = line.trim();
+    if line.starts_with('+') {
+        if !password.is_empty() {
+            println!("\x1b[32mAuthenticated.\x1b[0m");
+        }
+    } else if !password.is_empty() {
+        println!("\x1b[31m{}\x1b[0m", line);
+    }
+}
+
 async fn connect(host: &str, port: &str) -> Result<(tokio::net::tcp::OwnedWriteHalf, BufReader<tokio::net::tcp::OwnedReadHalf>), Box<dyn std::error::Error>> {
     let addr = format!("{}:{}", host, port);
     let stream = TcpStream::connect(&addr).await?;
@@ -139,9 +169,10 @@ async fn connect(host: &str, port: &str) -> Result<(tokio::net::tcp::OwnedWriteH
     Ok((writer, buf_reader))
 }
 
-fn parse_args(args: &[String]) -> (String, String, Vec<String>) {
+fn parse_args(args: &[String]) -> (String, String, String, Vec<String>) {
     let mut host = String::from("127.0.0.1");
     let mut port = String::from("7898");
+    let mut password = String::new();
     let mut i = 1;
 
     while i < args.len() {
@@ -158,13 +189,19 @@ fn parse_args(args: &[String]) -> (String, String, Vec<String>) {
                     port = args[i].clone();
                 }
             }
+            "-a" | "--auth" => {
+                i += 1;
+                if i < args.len() {
+                    password = args[i].clone();
+                }
+            }
             _ => {
                 let cmd_args = args[i..].to_vec();
-                return (host, port, cmd_args);
+                return (host, port, password, cmd_args);
             }
         }
         i += 1;
     }
 
-    (host, port, vec![])
+    (host, port, password, vec![])
 }
