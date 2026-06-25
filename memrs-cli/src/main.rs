@@ -1,64 +1,147 @@
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 use std::env;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
+fn print_help() {
+    println!("\x1b[1mAvailable commands:\x1b[0m");
+    println!("  \x1b[33mPING\x1b[0m                       → +PONG");
+    println!("  \x1b[33mAUTH <password>\x1b[0m             → Authenticate with the server");
+    println!("  \x1b[33mHELP\x1b[0m                        → Show this help message");
+    println!("  \x1b[33mCLEAR\x1b[0m                       → Clear the terminal");
+    println!("  \x1b[33mCONNECT <host> <port>\x1b[0m       → Connect to a different server");
+    println!("  \x1b[33mEXIT\x1b[0m / \x1b[33mQUIT\x1b[0m               → Disconnect and exit");
+    println!();
+    println!("\x1b[90mUse \x1b[0m\x1b[90m↑/↓\x1b[0m\x1b[90m for history, \x1b[0m\x1b[90mTab\x1b[0m\x1b[90m for completion.\x1b[0m");
+}
+
+fn format_response(raw: &str) -> String {
+    if raw.starts_with('+') {
+        format!("\x1b[32m{}\x1b[0m", raw)
+    } else if raw.starts_with('-') {
+        format!("\x1b[31m{}\x1b[0m", raw)
+    } else if raw.starts_with(':') {
+        format!("\x1b[36m{}\x1b[0m", raw)
+    } else {
+        format!("\x1b[37m{}\x1b[0m", raw)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let (host, port, cmd_args) = parse_args(&args);
+    let (mut host, mut port, cmd_args) = parse_args(&args);
 
-    let addr = format!("{}:{}", host, port);
-    let mut stream = TcpStream::connect(&addr).await?;
-    let (reader, mut writer) = stream.split();
-    let mut buf_reader = BufReader::new(reader);
-    let mut line = String::new();
+    let (mut writer, mut buf_reader) = connect(&host, &port).await?;
 
+    // --- one-shot mode ---
     if !cmd_args.is_empty() {
-        // one-shot mode: send cmd, print response, exit
         for cmd in &cmd_args {
             writer.write_all(cmd.as_bytes()).await?;
             writer.write_all(b"\r\n").await?;
         }
+        let mut line = String::new();
         buf_reader.read_line(&mut line).await?;
         print!("{}", line);
-    } else {
-        // interactive REPL mode
-        let stdin = tokio::io::stdin();
-        let mut stdin_reader = BufReader::new(stdin);
-        let mut input = String::new();
+        return Ok(());
+    }
 
-        println!("Connected to {addr}");
-        loop {
-            input.clear();
-            let n = stdin_reader.read_line(&mut input).await?;
-            if n == 0 {
+    // --- interactive REPL mode ---
+    let mut rl = DefaultEditor::new()?;
+    let _ = rl.load_history(".memrs_history");
+
+    println!("\x1b[1;34m  ╔══════════════════════════════════╗\x1b[0m");
+    println!("\x1b[1;34m  ║      \x1b[1;37m memrs-cli v0.1.0 \x1b[1;34m      ║\x1b[0m");
+    println!("\x1b[1;34m  ║    \x1b[1;37mConnected to {}:{}\x1b[1;34m   ║\x1b[0m", host, port);
+    println!("\x1b[1;34m  ╚══════════════════════════════════╝\x1b[0m");
+    println!("\x1b[90mType HELP for available commands.\x1b[0m");
+
+    loop {
+        let prompt = format!("\x1b[1;32mmemrs\x1b[0m@\x1b[1;36m{}:{}\x1b[0m> ", host, port);
+
+        let readline = rl.readline(&prompt);
+        match readline {
+            Ok(input) => {
+                let trimmed = input.trim().to_string();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                rl.add_history_entry(&trimmed)?;
+
+                match trimmed.to_uppercase().as_str() {
+                    "EXIT" | "QUIT" => {
+                        println!("\x1b[33mGoodbye.\x1b[0m");
+                        break;
+                    }
+                    "HELP" => {
+                        print_help();
+                        continue;
+                    }
+                    "CLEAR" => {
+                        print!("\x1b[2J\x1b[1;1H");
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                if trimmed.starts_with("CONNECT ") {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() == 3 {
+                        host = parts[1].to_string();
+                        port = parts[2].to_string();
+                        match connect(&host, &port).await {
+                            Ok((w, r)) => {
+                                writer = w;
+                                buf_reader = r;
+                                println!("\x1b[32mConnected to {}:{}\x1b[0m", host, port);
+                            }
+                            Err(e) => {
+                                println!("\x1b[31mConnection failed: {}\x1b[0m", e)
+                            }
+                        }
+                    } else {
+                        println!("\x1b[31mUsage: CONNECT <host> <port>\x1b[0m");
+                    }
+                    continue;
+                }
+
+                writer.write_all(trimmed.as_bytes()).await?;
+                writer.write_all(b"\r\n").await?;
+
+                let mut line = String::new();
+                buf_reader.read_line(&mut line).await?;
+                print!("{}\n", format_response(line.trim()));
+            }
+            Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
+                println!("\x1b[33mGoodbye.\x1b[0m");
                 break;
             }
-
-            let trimmed = input.trim();
-            if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
+            Err(e) => {
+                eprintln!("\x1b[31mError: {}\x1b[0m", e);
                 break;
             }
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            writer.write_all(trimmed.as_bytes()).await?;
-            writer.write_all(b"\r\n").await?;
-
-            line.clear();
-            buf_reader.read_line(&mut line).await?;
-            print!("{}", line);
         }
     }
 
+    let _ = rl.append_history(".memrs_history");
     Ok(())
+}
+
+async fn connect(host: &str, port: &str) -> Result<(tokio::net::tcp::OwnedWriteHalf, BufReader<tokio::net::tcp::OwnedReadHalf>), Box<dyn std::error::Error>> {
+    let addr = format!("{}:{}", host, port);
+    let stream = TcpStream::connect(&addr).await?;
+    let (reader, writer) = stream.into_split();
+    let buf_reader = BufReader::new(reader);
+    Ok((writer, buf_reader))
 }
 
 fn parse_args(args: &[String]) -> (String, String, Vec<String>) {
     let mut host = String::from("127.0.0.1");
     let mut port = String::from("7898");
-    let mut cmd_args: Vec<String> = Vec::new();
     let mut i = 1;
 
     while i < args.len() {
@@ -76,12 +159,12 @@ fn parse_args(args: &[String]) -> (String, String, Vec<String>) {
                 }
             }
             _ => {
-                cmd_args = args[i..].to_vec();
-                break;
+                let cmd_args = args[i..].to_vec();
+                return (host, port, cmd_args);
             }
         }
         i += 1;
     }
 
-    (host, port, cmd_args)
+    (host, port, vec![])
 }
