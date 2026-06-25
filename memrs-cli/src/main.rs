@@ -57,13 +57,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rl = DefaultEditor::new()?;
     let _ = rl.load_history(".memrs_history");
 
-    println!("\x1b[1;34m  ╔══════════════════════════════════╗\x1b[0m");
-    println!("\x1b[1;34m  ║      \x1b[1;37m memrs-cli v0.1.0 \x1b[1;34m      ║\x1b[0m");
-    println!("\x1b[1;34m  ║    \x1b[1;37mConnected to {}:{}\x1b[1;34m   ║\x1b[0m", host, port);
+    println!("\x1b[1;32mmemrs-cli\x1b[0m connected to \x1b[1;36m{}:{}\x1b[0m", host, port);
     if !password.is_empty() {
-        println!("\x1b[1;34m  ║   \x1b[1;32m Authenticated       \x1b[1;34m   ║\x1b[0m");
+        println!("\x1b[32mAuthenticated.\x1b[0m");
     }
-    println!("\x1b[1;34m  ╚══════════════════════════════════╝\x1b[0m");
     println!("\x1b[90mType HELP for available commands.\x1b[0m");
 
     loop {
