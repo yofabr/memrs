@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::{config::Config, repl::ReplCommands};
 use color_eyre::{eyre::eyre, Result};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -39,13 +39,27 @@ pub trait KeyOps {
 
 pub trait ListOps {
     // Inserts a new element at the head of the list
-    fn lpush(&self, key: String, value: String);
+    fn lpush(&mut self, key: String, value: String) -> Result<()>;
 
     // Inserts a new element at the tail of the list
-    fn rpush(&self, key: String, value: String);
+    fn rpush(&mut self, key: String, value: String) -> Result<()>;
+
+    // Removes and returns the first element from the left
+    fn lpop(&mut self, key: String) -> Result<String>;
+
+    // Removes and returns the last element from the right
+    fn rpop(&mut self, key: String) -> Result<String>;
 
     // returns a range of items
     fn lrange(&self, key: String);
+}
+
+pub trait HashOps {
+    // Sets the value of a specific field within a hash
+    fn hset(&mut self, key: String, field: String, value: String) -> Result<()>;
+
+    // Retrieves the value of a specific field
+    fn hget(&self, key: String, field: String) -> Result<String>;
 }
 
 pub trait SetOps {
@@ -78,6 +92,59 @@ pub struct Store {
 impl Store {
     fn new(store: HashMap<String, CacheEntry>) -> Self {
         Self { data: store }
+    }
+}
+
+impl Store {
+    pub fn execute(&mut self, command: ReplCommands) -> Result<()> {
+        match command {
+            ReplCommands::GET(key) => {
+                let entry = self.get(key)?;
+                println!("{:?}", entry);
+            }
+            ReplCommands::SET(key, value) => {
+                self.set(
+                    key,
+                    CacheEntry {
+                        item: CacheValue::STR(value),
+                        ttl: None,
+                    },
+                )?;
+            }
+            ReplCommands::EXISTS(key) => {
+                self.exists(key)?;
+                println!("Key exists");
+            }
+            ReplCommands::DEL(key) => {
+                self.del(key)?;
+                println!("Key deleted");
+            }
+            ReplCommands::HSET(key, field, value) => {
+                self.hset(key, field, value)?;
+            }
+            ReplCommands::HGET(key, field) => {
+                let val = self.hget(key, field)?;
+                println!("{}", val);
+            }
+            ReplCommands::LPUSH(key, value) => {
+                self.lpush(key, value)?;
+            }
+            ReplCommands::RPUSH(key, value) => {
+                self.rpush(key, value)?;
+            }
+            ReplCommands::LPOP(key) => {
+                let val = self.lpop(key)?;
+                println!("{}", val);
+            }
+            ReplCommands::RPOP(key) => {
+                let val = self.rpop(key)?;
+                println!("{}", val);
+            }
+            ReplCommands::PING => {
+                println!("PONG");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -116,6 +183,93 @@ impl KeyOps for Store {
     fn flushall(&mut self) -> Result<()> {
         self.data.clear();
         Ok(())
+    }
+}
+
+impl ListOps for Store {
+    fn lpush(&mut self, key: String, value: String) -> Result<()> {
+        let entry = self.data.entry(key).or_insert_with(|| CacheEntry {
+            item: CacheValue::List(VecDeque::new()),
+            ttl: None,
+        });
+        match &mut entry.item {
+            CacheValue::List(list) => {
+                list.push_front(value);
+                Ok(())
+            }
+            _ => Err(eyre!("Key is not a list")),
+        }
+    }
+
+    fn rpush(&mut self, key: String, value: String) -> Result<()> {
+        let entry = self.data.entry(key).or_insert_with(|| CacheEntry {
+            item: CacheValue::List(VecDeque::new()),
+            ttl: None,
+        });
+        match &mut entry.item {
+            CacheValue::List(list) => {
+                list.push_back(value);
+                Ok(())
+            }
+            _ => Err(eyre!("Key is not a list")),
+        }
+    }
+
+    fn lpop(&mut self, key: String) -> Result<String> {
+        let entry = self.data.get_mut(&key);
+        match entry {
+            Some(entry) => match &mut entry.item {
+                CacheValue::List(list) => list.pop_front().ok_or_else(|| eyre!("List is empty")),
+                _ => Err(eyre!("Key is not a list")),
+            },
+            None => Err(eyre!("No records have been found")),
+        }
+    }
+
+    fn rpop(&mut self, key: String) -> Result<String> {
+        let entry = self.data.get_mut(&key);
+        match entry {
+            Some(entry) => match &mut entry.item {
+                CacheValue::List(list) => list.pop_back().ok_or_else(|| eyre!("List is empty")),
+                _ => Err(eyre!("Key is not a list")),
+            },
+            None => Err(eyre!("No records have been found")),
+        }
+    }
+
+    fn lrange(&self, _key: String) {
+        todo!()
+    }
+}
+
+impl HashOps for Store {
+    fn hset(&mut self, key: String, field: String, value: String) -> Result<()> {
+        let entry = self.data.entry(key).or_insert_with(|| CacheEntry {
+            item: CacheValue::Map(HashMap::new()),
+            ttl: None,
+        });
+        match &mut entry.item {
+            CacheValue::Map(map) => {
+                map.insert(field, value);
+                Ok(())
+            }
+            _ => Err(eyre!("Key is not a hash")),
+        }
+    }
+
+    fn hget(&self, key: String, field: String) -> Result<String> {
+        let entry = self.data.get(&key);
+        match entry {
+            Some(entry) => match &entry.item {
+                CacheValue::Map(map) => {
+                    map.get(&field)
+                        .cloned()
+                        .ok_or_else(|| eyre!("Field not found"))
+                }
+                _ => Err(eyre!("Key is not a hash")),
+            },
+            None => Err(eyre!("No records have been found")),
+        }
     }
 }
 
