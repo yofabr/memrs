@@ -26,6 +26,8 @@ pub enum ReplCommands {
     LPOP(String), // Removes and returns the first element from the left.
     RPOP(String), // Removes and returns the last element from the right.
     PING,         // -> PONG
+    FLUSHALL,     // Clears all keys
+    LISTALL(Option<usize>), // Lists all keys with pagination (10 per page)
 }
 
 impl ReplCommands {
@@ -121,7 +123,12 @@ impl ReplCommands {
                 Ok(Self::RPOP(key.to_string()))
             }
             "ping" => Ok(Self::PING),
-            _ => Err(eyre!("Unknown command: {} — Usage: GET | SET | EXISTS | DEL | HSET | HGET | LPUSH | RPUSH | LPOP | RPOP | PING", verb)),
+            "flushall" => Ok(Self::FLUSHALL),
+            "listall" => {
+                let page = words.next().map(|p| p.parse::<usize>().unwrap_or(1));
+                Ok(Self::LISTALL(page))
+            }
+            _ => Err(eyre!("Unknown command: {} — Usage: GET | SET | EXISTS | DEL | HSET | HGET | LPUSH | RPUSH | LPOP | RPOP | PING | FLUSHALL | LISTALL", verb)),
         }
     }
 }

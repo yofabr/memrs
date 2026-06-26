@@ -82,6 +82,7 @@ pub enum CacheValue {
 pub struct CacheEntry {
     pub item: CacheValue,
     pub ttl: Option<Instant>,
+    pub created_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +112,7 @@ impl Store {
                     CacheEntry {
                         item: CacheValue::STR(value),
                         ttl: None,
+                        created_at: Instant::now(),
                     },
                 )?;
                 Ok("+OK".to_string())
@@ -148,6 +150,38 @@ impl Store {
                 Ok(val)
             }
             ReplCommands::PING => Ok("+PONG".to_string()),
+            ReplCommands::FLUSHALL => {
+                self.flushall()?;
+                Ok("+OK".to_string())
+            }
+            ReplCommands::LISTALL(page) => {
+                let page = page.unwrap_or(1).max(1);
+                let limit = 10;
+                let mut entries: Vec<(&String, &CacheEntry)> = self.data.iter().collect();
+                entries.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+                let total = entries.len();
+                let total_pages = total.div_ceil(limit).max(1);
+                let start = (page - 1) * limit;
+                let batch: Vec<&(&String, &CacheEntry)> = entries.iter().skip(start).take(limit).collect();
+
+                if batch.is_empty() {
+                    Ok(format!("+0 keys (Page {}/{})", page, total_pages))
+                } else {
+                    let items: Vec<String> = batch
+                        .iter()
+                        .map(|(k, v)| {
+                            let type_str = match &v.item {
+                                CacheValue::STR(_) => "STRING".to_string(),
+                                CacheValue::List(l) => format!("LIST[{}]", l.len()),
+                                CacheValue::SET(s) => format!("SET[{}]", s.len()),
+                                CacheValue::Map(m) => format!("HASH[{}]", m.len()),
+                            };
+                            format!("{} ({})", k, type_str)
+                        })
+                        .collect();
+                    Ok(format!("+{} keys (Page {}/{}): {}", total, page, total_pages, items.join(", ")))
+                }
+            }
         }
     }
 }
@@ -195,6 +229,7 @@ impl ListOps for Store {
         let entry = self.data.entry(key).or_insert_with(|| CacheEntry {
             item: CacheValue::List(VecDeque::new()),
             ttl: None,
+            created_at: Instant::now(),
         });
         match &mut entry.item {
             CacheValue::List(list) => {
@@ -209,6 +244,7 @@ impl ListOps for Store {
         let entry = self.data.entry(key).or_insert_with(|| CacheEntry {
             item: CacheValue::List(VecDeque::new()),
             ttl: None,
+            created_at: Instant::now(),
         });
         match &mut entry.item {
             CacheValue::List(list) => {
@@ -251,6 +287,7 @@ impl HashOps for Store {
         let entry = self.data.entry(key).or_insert_with(|| CacheEntry {
             item: CacheValue::Map(HashMap::new()),
             ttl: None,
+            created_at: Instant::now(),
         });
         match &mut entry.item {
             CacheValue::Map(map) => {
@@ -265,11 +302,10 @@ impl HashOps for Store {
         let entry = self.data.get(&key);
         match entry {
             Some(entry) => match &entry.item {
-                CacheValue::Map(map) => {
-                    map.get(&field)
-                        .cloned()
-                        .ok_or_else(|| eyre!("Field not found"))
-                }
+                CacheValue::Map(map) => map
+                    .get(&field)
+                    .cloned()
+                    .ok_or_else(|| eyre!("Field not found")),
                 _ => Err(eyre!("Key is not a hash")),
             },
             None => Err(eyre!("No records have been found")),

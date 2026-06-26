@@ -19,6 +19,8 @@ fn print_help() {
     println!("  \x1b[33mSET <key> <value>\x1b[0m           → Insert or update a key-value pair");
     println!("  \x1b[33mEXISTS <key>\x1b[0m                → Check if a key exists");
     println!("  \x1b[33mDEL <key>\x1b[0m                   → Delete a key-value pair");
+    println!("  \x1b[33mFLUSHALL\x1b[0m                    → Delete all keys");
+    println!("  \x1b[33mLISTALL [page]\x1b[0m              → List keys (10 per page, most recent first)");
     println!();
     println!("\x1b[1mHash commands:\x1b[0m");
     println!("  \x1b[33mHSET <key> <field> <value>\x1b[0m  → Set a field in a hash");
