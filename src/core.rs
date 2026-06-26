@@ -96,11 +96,14 @@ impl Store {
 }
 
 impl Store {
-    pub fn execute(&mut self, command: ReplCommands) -> Result<()> {
+    pub fn execute(&mut self, command: ReplCommands) -> Result<String> {
         match command {
             ReplCommands::GET(key) => {
                 let entry = self.get(key)?;
-                println!("{:?}", entry);
+                match &entry.item {
+                    CacheValue::STR(s) => Ok(s.clone()),
+                    other => Ok(format!("{:?}", other)),
+                }
             }
             ReplCommands::SET(key, value) => {
                 self.set(
@@ -110,41 +113,42 @@ impl Store {
                         ttl: None,
                     },
                 )?;
+                Ok("+OK".to_string())
             }
             ReplCommands::EXISTS(key) => {
                 self.exists(key)?;
-                println!("Key exists");
+                Ok("+OK".to_string())
             }
             ReplCommands::DEL(key) => {
                 self.del(key)?;
-                println!("Key deleted");
+                Ok("+OK".to_string())
             }
             ReplCommands::HSET(key, field, value) => {
                 self.hset(key, field, value)?;
+                Ok("+OK".to_string())
             }
             ReplCommands::HGET(key, field) => {
                 let val = self.hget(key, field)?;
-                println!("{}", val);
+                Ok(val)
             }
             ReplCommands::LPUSH(key, value) => {
                 self.lpush(key, value)?;
+                Ok("+OK".to_string())
             }
             ReplCommands::RPUSH(key, value) => {
                 self.rpush(key, value)?;
+                Ok("+OK".to_string())
             }
             ReplCommands::LPOP(key) => {
                 let val = self.lpop(key)?;
-                println!("{}", val);
+                Ok(val)
             }
             ReplCommands::RPOP(key) => {
                 let val = self.rpop(key)?;
-                println!("{}", val);
+                Ok(val)
             }
-            ReplCommands::PING => {
-                println!("PONG");
-            }
+            ReplCommands::PING => Ok("+PONG".to_string()),
         }
-        Ok(())
     }
 }
 

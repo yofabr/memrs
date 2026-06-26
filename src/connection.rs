@@ -4,7 +4,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use crate::core::CONFIG;
+use crate::core::{CONFIG, STORE};
+use crate::repl::ReplCommands;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientType {
@@ -96,7 +97,13 @@ async fn process_command(client: &mut Client, cmd: &str) -> String {
             if !client.is_authenticated {
                 return "-NOAUTH Authentication required".to_string();
             }
-            format!("-ERR unknown command '{}'", command)
+            match ReplCommands::parse_command(cmd.to_string()) {
+                Ok(parsed) => match STORE.lock().unwrap().execute(parsed) {
+                    Ok(response) => response,
+                    Err(e) => format!("-ERR {}", e),
+                },
+                Err(e) => format!("-ERR {}", e),
+            }
         }
     }
 }
