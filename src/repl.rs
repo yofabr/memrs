@@ -5,12 +5,12 @@ pub enum ReplCommands {
     GET(String),
 
     // SET ->  inserts or updated a key-value pair
-    SET,
+    SET(String, String),
 
     // EXISTS -> Checks if the provided ket exists in a memory.
-    EXISTS,
+    EXISTS(String),
     // DEL -> Deletes key value pair
-    DEL,
+    DEL(String),
 
     // HSET -> Sets the value of a specific field within a hash.
     HSET,
@@ -19,13 +19,13 @@ pub enum ReplCommands {
     HGET,
 
     // LPUSH -> Prepends an element to the head (left side) of a list.
-    LPUSH,
+    LPUSH(String, String),
 
     // RPUSH -> Appends an element to the tail (right side) of a list.
-    RPUSH,
-    LPOP, // Removes and returns the first element from the left.
-    RPOP, // Removes and returns the last element from the right.
-    PING, // -> PONG
+    RPUSH(String, String),
+    LPOP(String), // Removes and returns the first element from the left.
+    RPOP(String), // Removes and returns the last element from the right.
+    PING,         // -> PONG
 }
 
 impl ReplCommands {
