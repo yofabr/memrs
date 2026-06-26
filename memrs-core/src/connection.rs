@@ -4,7 +4,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use crate::core::{CONFIG, STORE};
+use crate::core::{start_expiry_worker, CONFIG, STORE};
 use crate::repl::ReplCommands;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +34,7 @@ pub async fn init_listener() -> Result<()> {
     let listener = TcpListener::bind(&address).await?;
 
     println!("[INFO] Started TcpListener at: {}", &address);
+    tokio::spawn(async { start_expiry_worker().await });
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {

@@ -5,7 +5,8 @@ pub enum ReplCommands {
     GET(String),
 
     // SET ->  inserts or updated a key-value pair
-    SET(String, String),
+    // optional TTL in seconds
+    SET(String, String, Option<u64>),
 
     // EXISTS -> Checks if the provided ket exists in a memory.
     EXISTS(String),
@@ -28,6 +29,7 @@ pub enum ReplCommands {
     PING,         // -> PONG
     FLUSHALL,     // Clears all keys
     LISTALL(Option<usize>), // Lists all keys with pagination (10 per page)
+    EXPIRE(String, u64), // Sets a timeout on a key in seconds
 }
 
 impl ReplCommands {
@@ -52,12 +54,13 @@ impl ReplCommands {
             }
             "set" => {
                 let key = words.next().ok_or_else(|| {
-                    eyre!("Missing argument — Usage: SET <key> <value>")
+                    eyre!("Missing argument — Usage: SET <key> <value> [ttl_seconds]")
                 })?;
                 let value = words.next().ok_or_else(|| {
-                    eyre!("Missing argument — Usage: SET <key> <value>")
+                    eyre!("Missing argument — Usage: SET <key> <value> [ttl_seconds]")
                 })?;
-                Ok(Self::SET(key.to_string(), value.to_string()))
+                let ttl = words.next().and_then(|s| s.parse::<u64>().ok());
+                Ok(Self::SET(key.to_string(), value.to_string(), ttl))
             }
             "exists" => {
                 let key = words.next().ok_or_else(|| {
@@ -128,7 +131,16 @@ impl ReplCommands {
                 let page = words.next().map(|p| p.parse::<usize>().unwrap_or(1));
                 Ok(Self::LISTALL(page))
             }
-            _ => Err(eyre!("Unknown command: {} — Usage: GET | SET | EXISTS | DEL | HSET | HGET | LPUSH | RPUSH | LPOP | RPOP | PING | FLUSHALL | LISTALL", verb)),
+            "expire" => {
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: EXPIRE <key> <seconds>")
+                })?;
+                let seconds = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: EXPIRE <key> <seconds>")
+                })?.parse::<u64>().map_err(|_| eyre!("EXPIRE seconds must be a number — Usage: EXPIRE <key> <seconds>"))?;
+                Ok(Self::EXPIRE(key.to_string(), seconds))
+            }
+            _ => Err(eyre!("Unknown command: {} — Usage: GET | SET | EXISTS | DEL | HSET | HGET | LPUSH | RPUSH | LPOP | RPOP | PING | FLUSHALL | LISTALL | EXPIRE", verb)),
         }
     }
 }

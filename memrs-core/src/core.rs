@@ -3,7 +3,7 @@ use color_eyre::{eyre::eyre, Result};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{LazyLock, Mutex},
-    // time::Duration,
+    time::Duration,
 };
 use tokio::time::Instant;
 
@@ -88,11 +88,26 @@ pub struct CacheEntry {
 #[derive(Debug, Clone)]
 pub struct Store {
     data: HashMap<String, CacheEntry>,
+    entry_expiries: HashMap<String, Instant>,
 }
 
 impl Store {
     fn new(store: HashMap<String, CacheEntry>) -> Self {
-        Self { data: store }
+        Self {
+            data: store,
+            entry_expiries: HashMap::new(),
+        }
+    }
+
+    fn check_expiry(&mut self, key: &str) {
+        if let Some(entry) = self.data.get(key) {
+            if let Some(deadline) = entry.ttl {
+                if Instant::now() >= deadline {
+                    self.data.remove(key);
+                    self.entry_expiries.remove(key);
+                }
+            }
+        }
     }
 }
 
@@ -100,24 +115,30 @@ impl Store {
     pub fn execute(&mut self, command: ReplCommands) -> Result<String> {
         match command {
             ReplCommands::GET(key) => {
+                self.check_expiry(&key);
                 let entry = self.get(key)?;
                 match &entry.item {
                     CacheValue::STR(s) => Ok(s.clone()),
                     other => Ok(format!("{:?}", other)),
                 }
             }
-            ReplCommands::SET(key, value) => {
+            ReplCommands::SET(key, value, ttl) => {
+                let deadline = ttl.map(|secs| Instant::now() + Duration::from_secs(secs));
+                if let Some(d) = deadline {
+                    self.entry_expiries.insert(key.clone(), d);
+                }
                 self.set(
                     key,
                     CacheEntry {
                         item: CacheValue::STR(value),
-                        ttl: None,
+                        ttl: deadline,
                         created_at: Instant::now(),
                     },
                 )?;
                 Ok("+OK".to_string())
             }
             ReplCommands::EXISTS(key) => {
+                self.check_expiry(&key);
                 self.exists(key)?;
                 Ok("+OK".to_string())
             }
@@ -126,30 +147,46 @@ impl Store {
                 Ok("+OK".to_string())
             }
             ReplCommands::HSET(key, field, value) => {
+                self.check_expiry(&key);
                 self.hset(key, field, value)?;
                 Ok("+OK".to_string())
             }
             ReplCommands::HGET(key, field) => {
+                self.check_expiry(&key);
                 let val = self.hget(key, field)?;
                 Ok(val)
             }
             ReplCommands::LPUSH(key, value) => {
+                self.check_expiry(&key);
                 self.lpush(key, value)?;
                 Ok("+OK".to_string())
             }
             ReplCommands::RPUSH(key, value) => {
+                self.check_expiry(&key);
                 self.rpush(key, value)?;
                 Ok("+OK".to_string())
             }
             ReplCommands::LPOP(key) => {
+                self.check_expiry(&key);
                 let val = self.lpop(key)?;
                 Ok(val)
             }
             ReplCommands::RPOP(key) => {
+                self.check_expiry(&key);
                 let val = self.rpop(key)?;
                 Ok(val)
             }
             ReplCommands::PING => Ok("+PONG".to_string()),
+            ReplCommands::EXPIRE(key, seconds) => {
+                let deadline = Instant::now() + Duration::from_secs(seconds);
+                if let Some(entry) = self.data.get_mut(&key) {
+                    entry.ttl = Some(deadline);
+                    self.entry_expiries.insert(key, deadline);
+                    Ok("+OK".to_string())
+                } else {
+                    Err(eyre!("No records have been found"))
+                }
+            }
             ReplCommands::FLUSHALL => {
                 self.flushall()?;
                 Ok("+OK".to_string())
@@ -162,7 +199,8 @@ impl Store {
                 let total = entries.len();
                 let total_pages = total.div_ceil(limit).max(1);
                 let start = (page - 1) * limit;
-                let batch: Vec<&(&String, &CacheEntry)> = entries.iter().skip(start).take(limit).collect();
+                let batch: Vec<&(&String, &CacheEntry)> =
+                    entries.iter().skip(start).take(limit).collect();
 
                 if batch.is_empty() {
                     Ok(format!("+0 keys (Page {}/{})", page, total_pages))
@@ -179,7 +217,13 @@ impl Store {
                             format!("{} ({})", k, type_str)
                         })
                         .collect();
-                    Ok(format!("+{} keys (Page {}/{}): {}", total, page, total_pages, items.join(", ")))
+                    Ok(format!(
+                        "+{} keys (Page {}/{}): {}",
+                        total,
+                        page,
+                        total_pages,
+                        items.join(", ")
+                    ))
                 }
             }
         }
@@ -213,13 +257,14 @@ impl KeyOps for Store {
     }
 
     fn del(&mut self, key: String) -> Result<()> {
-        // More logics will happen on this one
-        let _res = self.data.remove(&key);
+        self.data.remove(&key);
+        self.entry_expiries.remove(&key);
         Ok(())
     }
 
     fn flushall(&mut self) -> Result<()> {
         self.data.clear();
+        self.entry_expiries.clear();
         Ok(())
     }
 }
@@ -318,3 +363,57 @@ pub static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| {
     let store_constructor = Store::new(store);
     Mutex::new(store_constructor)
 });
+
+pub async fn start_expiry_worker() {
+    let mut tick = tokio::time::interval(Duration::from_millis(100));
+    loop {
+        tick.tick().await;
+        let aggressive = {
+            let mut store = STORE.lock().unwrap();
+            let ttl_count = store.entry_expiries.len();
+            if ttl_count == 0 {
+                continue;
+            }
+
+            let sample_size = ttl_count.min(20);
+            let expired_count: usize = store
+                .entry_expiries
+                .iter()
+                .take(sample_size)
+                .filter(|(_, deadline)| Instant::now() >= **deadline)
+                .count();
+
+            let ratio = expired_count as f64 / sample_size as f64;
+            let do_aggressive = ratio > 0.25;
+
+            let expired: Vec<String> = if do_aggressive {
+                store
+                    .entry_expiries
+                    .iter()
+                    .filter(|(_, deadline)| Instant::now() >= **deadline)
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            } else {
+                store
+                    .entry_expiries
+                    .iter()
+                    .take(sample_size)
+                    .filter(|(_, deadline)| Instant::now() >= **deadline)
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            };
+
+            for key in &expired {
+                store.data.remove(key);
+                store.entry_expiries.remove(key);
+            }
+            do_aggressive
+        };
+
+        if aggressive {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        } else {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+}
