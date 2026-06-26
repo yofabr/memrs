@@ -43,53 +43,85 @@ impl ReplCommands {
         // 3. Match on the verb and draw arguments out of the iterator as needed
         match verb.to_lowercase().as_str() {
             "get" => {
-                let key = words.next().ok_or_else(|| eyre!("GET requires a key"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: GET <key>")
+                })?;
                 Ok(Self::GET(key.to_string()))
             }
             "set" => {
-                let key = words.next().ok_or_else(|| eyre!("SET requires a key"))?;
-                let value = words.next().ok_or_else(|| eyre!("SET requires a value"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: SET <key> <value>")
+                })?;
+                let value = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: SET <key> <value>")
+                })?;
                 Ok(Self::SET(key.to_string(), value.to_string()))
             }
             "exists" => {
-                let key = words.next().ok_or_else(|| eyre!("EXISTS requires a key"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: EXISTS <key>")
+                })?;
                 Ok(Self::EXISTS(key.to_string()))
             }
             "del" => {
-                let key = words.next().ok_or_else(|| eyre!("DEL requires a key"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: DEL <key>")
+                })?;
                 Ok(Self::DEL(key.to_string()))
             }
             "hset" => {
-                let key = words.next().ok_or_else(|| eyre!("HSET requires a key"))?;
-                let field = words.next().ok_or_else(|| eyre!("HSET requires a field"))?;
-                let value = words.next().ok_or_else(|| eyre!("HSET requires a value"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: HSET <key> <field> <value>")
+                })?;
+                let field = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: HSET <key> <field> <value>")
+                })?;
+                let value = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: HSET <key> <field> <value>")
+                })?;
                 Ok(Self::HSET(key.to_string(), field.to_string(), value.to_string()))
             }
             "hget" => {
-                let key = words.next().ok_or_else(|| eyre!("HGET requires a key"))?;
-                let field = words.next().ok_or_else(|| eyre!("HGET requires a field"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: HGET <key> <field>")
+                })?;
+                let field = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: HGET <key> <field>")
+                })?;
                 Ok(Self::HGET(key.to_string(), field.to_string()))
             }
             "lpush" => {
-                let key = words.next().ok_or_else(|| eyre!("LPUSH requires a key"))?;
-                let value = words.next().ok_or_else(|| eyre!("LPUSH requires a value"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: LPUSH <key> <value>")
+                })?;
+                let value = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: LPUSH <key> <value>")
+                })?;
                 Ok(Self::LPUSH(key.to_string(), value.to_string()))
             }
             "rpush" => {
-                let key = words.next().ok_or_else(|| eyre!("RPUSH requires a key"))?;
-                let value = words.next().ok_or_else(|| eyre!("RPUSH requires a value"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: RPUSH <key> <value>")
+                })?;
+                let value = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: RPUSH <key> <value>")
+                })?;
                 Ok(Self::RPUSH(key.to_string(), value.to_string()))
             }
             "lpop" => {
-                let key = words.next().ok_or_else(|| eyre!("LPOP requires a key"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: LPOP <key>")
+                })?;
                 Ok(Self::LPOP(key.to_string()))
             }
             "rpop" => {
-                let key = words.next().ok_or_else(|| eyre!("RPOP requires a key"))?;
+                let key = words.next().ok_or_else(|| {
+                    eyre!("Missing argument — Usage: RPOP <key>")
+                })?;
                 Ok(Self::RPOP(key.to_string()))
             }
             "ping" => Ok(Self::PING),
-            _ => Err(eyre!("Unknown command: {}", verb)),
+            _ => Err(eyre!("Unknown command: {} — Usage: GET | SET | EXISTS | DEL | HSET | HGET | LPUSH | RPUSH | LPOP | RPOP | PING", verb)),
         }
     }
 }
