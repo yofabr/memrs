@@ -1,0 +1,29 @@
+name: cli
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'memrs-cli/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'memrs-cli/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: memrs-cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memrs-cli
+      - run: cargo build --verbose
+      - run: cargo test --verbose
