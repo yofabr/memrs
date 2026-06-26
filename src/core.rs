@@ -1,5 +1,5 @@
 use tokio::time::Instant;
-
+use color_eyre::Result;
 use crate::config::Config;
 use std::{collections::{HashMap, HashSet, VecDeque}, sync::{LazyLock, Mutex}, time::Duration};
 
@@ -10,10 +10,11 @@ pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
 
 pub trait BasicOps {
     // Creates or updates a key in a database
-    fn set(&self, key: String, value: CacheValue);
+    fn set(&self, key: String, value: CacheEntry) -> Result<()>;
+    
 
     // Returns the value of a key
-    fn get(&self, key: String);
+    fn get(&self, key: String) -> Result<CacheEntry>;
 }
 
 pub trait KeyOps {
@@ -56,7 +57,7 @@ pub trait SetOps {
     fn smembers(&self, key: String);
 }
 
-
+#[derive(Debug, Clone)]
 pub enum CacheValue {
     STR(String),
     List(VecDeque<String>),
@@ -64,11 +65,13 @@ pub enum CacheValue {
     Map(HashMap<String, String>)
 }
 
+#[derive(Debug, Clone)]
 pub struct CacheEntry {
     pub item: CacheValue,
     pub ttl: Option<Instant>
 }
 
+#[derive(Debug, Clone)]
 pub struct Store {
     data: HashMap<String, CacheEntry>
 }
@@ -78,6 +81,19 @@ impl Store {
         Self {
             data: store
         }
+    }
+}
+
+impl BasicOps for Store {
+    fn set(&self, key: String, value: CacheEntry) -> Result<()> {
+        self.data.insert(key, value);
+        Ok(())
+    }
+
+    fn get(&self, key: String) -> Result<CacheEntry> {
+        // This will check for expiry dates on each get in the future.
+        let entry = self.data.get(&key)?;
+        Ok(entry.clone())
     }
 }
 
