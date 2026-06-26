@@ -1,5 +1,5 @@
 use tokio::time::Instant;
-use color_eyre::Result;
+use color_eyre::{Result, eyre::eyre};
 use crate::config::Config;
 use std::{collections::{HashMap, HashSet, VecDeque}, sync::{LazyLock, Mutex}, time::Duration};
 
@@ -19,19 +19,19 @@ pub trait BasicOps {
 
 pub trait KeyOps {
     // Checks if a key exists in a db
-    fn exists(&self, key: String);
+    fn exists(&self, key: String) -> Result<()>;
 
     // Deletes a key from a db
-    fn del(&self, key: String);
+    fn del(&self, key: String) -> Result<()>;
     
     // Frees up db (be careful when using this in a production code)
     fn flushall(&self);
 
     // List all the keys matching the passed pattern
-    fn keys(&self, pattern: String);
+    // fn keys(&self, pattern: String);
 
     // Sets an expiry for a key
-    fn expire(&self, key: String, time: Duration);
+    // fn expire(&self, key: String, time: Duration);
 }
 
 
@@ -94,6 +94,28 @@ impl BasicOps for Store {
         // This will check for expiry dates on each get in the future.
         let entry = self.data.get(&key)?;
         Ok(entry.clone())
+    }
+}
+
+impl KeyOps for Store {
+    fn exists(&self, key: String) -> Result<()> {
+        if self.data.contains_key(&key) {
+            Ok(())
+        } else {
+            Err(eyre!("No key found!"))
+        }
+    }
+
+    fn del(&self, key: String) -> Result<()>{
+
+        // More logics will happen on this one
+        let res = self.data.remove(&key);
+        Ok(())
+    }
+
+    fn flushall(&self) -> Result<()> {
+        self.data.clear();
+        Ok(())
     }
 }
 
