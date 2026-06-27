@@ -1,6 +1,7 @@
 services:
   memrs:
     build: .
+    image: yofabr/memrs
     ports:
       - "7898:7898"
     environment:
