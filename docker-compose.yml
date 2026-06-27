@@ -1,0 +1,8 @@
+services:
+  memrs:
+    build: .
+    ports:
+      - "7898:7898"
+    environment:
+      - PORT=7898
+      - PASSWORD=
