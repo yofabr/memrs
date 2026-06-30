@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use color_eyre::{eyre::eyre, Result};
@@ -21,7 +21,7 @@ struct SnapshotValue {
 #[derive(Serialize, Deserialize)]
 struct SnapshotEntry {
     value: SnapshotValue,
-    ttl_remaining_secs: Option<f64>,
+    ttl_expires_at: Option<f64>,
     created_at_elapsed_secs: f64,
 }
 
@@ -70,23 +70,27 @@ fn snapshot_to_cache_value(snap: &SnapshotValue) -> CacheValue {
 }
 
 pub fn save_snapshot(store_data: &HashMap<String, CacheEntry>, path: &Path) -> Result<()> {
-    let now = Instant::now();
+    let inst_now = Instant::now();
+    let sys_now = SystemTime::now();
     let mut entries = HashMap::with_capacity(store_data.len());
 
     for (key, entry) in store_data {
-        let ttl_remaining = entry.ttl.map(|deadline| {
-            let remaining = deadline.saturating_duration_since(now);
-            remaining.as_secs_f64()
+        let ttl_expires_at = entry.ttl.map(|deadline| {
+            let remaining = deadline.saturating_duration_since(inst_now);
+            (sys_now + remaining)
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64()
         });
 
-        let elapsed = now.saturating_duration_since(entry.created_at);
+        let elapsed = inst_now.saturating_duration_since(entry.created_at);
         let created_at_elapsed = elapsed.as_secs_f64();
 
         entries.insert(
             key.clone(),
             SnapshotEntry {
                 value: cache_value_to_snapshot(&entry.item),
-                ttl_remaining_secs: ttl_remaining,
+                ttl_expires_at,
                 created_at_elapsed_secs: created_at_elapsed,
             },
         );
@@ -108,16 +112,27 @@ pub fn load_snapshot(path: &Path) -> Result<HashMap<String, CacheEntry>> {
         .map_err(|e| eyre!("Failed to deserialize snapshot: {}", e))?;
 
     let now = Instant::now();
+    let sys_now = SystemTime::now();
     let mut entries = HashMap::with_capacity(snapshot.entries.len());
 
     for (key, snap_entry) in snapshot.entries {
-        let ttl = snap_entry.ttl_remaining_secs.map(|secs| {
-            if secs > 0.0 {
-                now + Duration::from_secs_f64(secs)
-            } else {
-                now
-            }
+        let expired = snap_entry.ttl_expires_at.map_or(false, |unix_secs| {
+            UNIX_EPOCH + Duration::from_secs_f64(unix_secs) <= sys_now
         });
+
+        let ttl = if expired {
+            None
+        } else {
+            snap_entry.ttl_expires_at.map(|unix_secs| {
+                let expires_at = UNIX_EPOCH + Duration::from_secs_f64(unix_secs);
+                let remaining = expires_at.duration_since(sys_now).unwrap_or_default();
+                now + remaining
+            })
+        };
+
+        if expired {
+            continue;
+        }
 
         let created_at = if snap_entry.created_at_elapsed_secs > 0.0 {
             now.checked_sub(Duration::from_secs_f64(snap_entry.created_at_elapsed_secs))
