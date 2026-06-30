@@ -2,14 +2,15 @@ use crate::{config::Config, repl::ReplCommands};
 use color_eyre::{eyre::eyre, Result};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{LazyLock, Mutex},
+    sync::LazyLock,
     time::Duration,
 };
 use tokio::time::Instant;
+use parking_lot::RwLock;
 
-pub static CONFIG: LazyLock<Mutex<Config>> = LazyLock::new(|| {
+pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     let config = Config::load_config();
-    Mutex::new(config)
+    RwLock::new(config)
 });
 
 pub trait BasicOps {
@@ -358,10 +359,10 @@ impl HashOps for Store {
     }
 }
 
-pub static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| {
+pub static STORE: LazyLock<RwLock<Store>> = LazyLock::new(|| {
     let store: HashMap<String, CacheEntry> = HashMap::new();
     let store_constructor = Store::new(store);
-    Mutex::new(store_constructor)
+    RwLock::new(store_constructor)
 });
 
 pub async fn start_expiry_worker() {
@@ -369,7 +370,7 @@ pub async fn start_expiry_worker() {
     loop {
         tick.tick().await;
         let aggressive = {
-            let mut store = STORE.lock().unwrap();
+            let mut store = STORE.write();
             let ttl_count = store.entry_expiries.len();
             if ttl_count == 0 {
                 continue;

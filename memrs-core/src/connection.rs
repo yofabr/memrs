@@ -29,7 +29,7 @@ impl Client {
 }
 
 pub async fn init_listener() -> Result<()> {
-    let port_number = CONFIG.lock().unwrap().port;
+    let port_number = CONFIG.read().port;
     let address = format!("0.0.0.0:{}", port_number);
     let listener = TcpListener::bind(&address).await?;
 
@@ -78,7 +78,7 @@ async fn process_command(client: &mut Client, cmd: &str) -> String {
     match command.as_str() {
         "PING" => "+PONG".to_string(),
         "AUTH" => {
-            let config = CONFIG.lock().unwrap();
+            let config = CONFIG.read();
             if config.password.is_empty() {
                 client.is_authenticated = true;
                 "+OK".to_string()
@@ -99,7 +99,7 @@ async fn process_command(client: &mut Client, cmd: &str) -> String {
                 return "-NOAUTH Authentication required".to_string();
             }
             match ReplCommands::parse_command(cmd.to_string()) {
-                Ok(parsed) => match STORE.lock().unwrap().execute(parsed) {
+                Ok(parsed) => match STORE.write().execute(parsed) {
                     Ok(response) => response,
                     Err(e) => format!("-ERR {}", e),
                 },
