@@ -186,6 +186,117 @@ pub fn try_load_at_startup() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::time::Duration;
+
+    fn make_entry(value: CacheValue, ttl: Option<Instant>) -> CacheEntry {
+        CacheEntry {
+            item: value,
+            ttl,
+            created_at: Instant::now(),
+        }
+    }
+
+    fn roundtrip(entries: HashMap<String, CacheEntry>) {
+        let dir = std::env::temp_dir().join(format!("memrs_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("snapshot.bin");
+
+        save_snapshot(&entries, &path).unwrap();
+        let loaded = load_snapshot(&path).unwrap();
+
+        assert_eq!(entries.len(), loaded.len());
+        for (key, original) in &entries {
+            let l = loaded.get(key).expect("missing key in loaded snapshot");
+            assert_eq!(l.item, original.item);
+            assert_eq!(l.ttl.is_some(), original.ttl.is_some());
+        }
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn snapshot_string() {
+        let mut map = HashMap::new();
+        map.insert("k".into(), make_entry(CacheValue::STR("hello".into()), None));
+        roundtrip(map);
+    }
+
+    #[test]
+    fn snapshot_list() {
+        let mut map = HashMap::new();
+        let list = CacheValue::List(VecDeque::from(["a".into(), "b".into(), "c".into()]));
+        map.insert("k".into(), make_entry(list, None));
+        roundtrip(map);
+    }
+
+    #[test]
+    fn snapshot_set() {
+        let mut map = HashMap::new();
+        let set = CacheValue::SET(HashSet::from(["x".into(), "y".into()]));
+        map.insert("k".into(), make_entry(set, None));
+        roundtrip(map);
+    }
+
+    #[test]
+    fn snapshot_hash() {
+        let mut map = HashMap::new();
+        let hash = CacheValue::Map(HashMap::from([("f1".into(), "v1".into())]));
+        map.insert("k".into(), make_entry(hash, None));
+        roundtrip(map);
+    }
+
+    #[test]
+    fn snapshot_multiple_types() {
+        let mut map = HashMap::new();
+        map.insert("s".into(), make_entry(CacheValue::STR("str".into()), None));
+        map.insert(
+            "l".into(),
+            make_entry(CacheValue::List(VecDeque::from(["a".into()])), None),
+        );
+        map.insert("h".into(), make_entry(
+            CacheValue::Map(HashMap::from([("f".into(), "v".into())])),
+            None,
+        ));
+        roundtrip(map);
+    }
+
+    #[test]
+    fn snapshot_empty() {
+        roundtrip(HashMap::new());
+    }
+
+    #[test]
+    fn load_skips_expired_entries() {
+        let dir = std::env::temp_dir().join(format!("memrs_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("expired.bin");
+
+        let past = Instant::now() - Duration::from_secs(60);
+        let future = Instant::now() + Duration::from_secs(9999);
+        let mut map = HashMap::new();
+        map.insert(
+            "fresh".into(),
+            make_entry(CacheValue::STR("ok".into()), Some(future)),
+        );
+        map.insert(
+            "stale".into(),
+            make_entry(CacheValue::STR("gone".into()), Some(past)),
+        );
+
+        save_snapshot(&map, &path).unwrap();
+        let loaded = load_snapshot(&path).unwrap();
+
+        assert!(loaded.contains_key("fresh"));
+        assert!(!loaded.contains_key("stale"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 pub async fn start_snapshot_worker() {
     let interval = snapshot_interval();
     let path = snapshot_path();

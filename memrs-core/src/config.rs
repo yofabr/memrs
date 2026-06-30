@@ -63,3 +63,44 @@ impl Config {
             .is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_password_empty_stored() {
+        let config = Config {
+            password: String::new(),
+            port: 0,
+        };
+        assert!(config.verify_password("anything"));
+    }
+
+    #[test]
+    fn verify_password_correct() {
+        let hash = Config::hash_password("secret").unwrap();
+        let config = Config {
+            password: hash,
+            port: 0,
+        };
+        assert!(config.verify_password("secret"));
+    }
+
+    #[test]
+    fn verify_password_incorrect() {
+        let hash = Config::hash_password("secret").unwrap();
+        let config = Config {
+            password: hash,
+            port: 0,
+        };
+        assert!(!config.verify_password("wrong"));
+    }
+
+    #[test]
+    fn hash_password_returns_valid_hash() {
+        let hash = Config::hash_password("mypass").unwrap();
+        assert!(!hash.is_empty());
+        assert!(hash.starts_with("$argon2id"));
+    }
+}

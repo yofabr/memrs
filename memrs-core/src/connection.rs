@@ -74,7 +74,7 @@ pub async fn handle_connection(mut stream: TcpStream) -> Result<()> {
     Ok(())
 }
 
-async fn process_command(client: &mut Client, cmd: &str) -> String {
+pub(crate) async fn process_command(client: &mut Client, cmd: &str) -> String {
     let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
     let command = parts[0].to_uppercase();
 
@@ -109,5 +109,123 @@ async fn process_command(client: &mut Client, cmd: &str) -> String {
                 Err(e) => format!("-ERR {}", e),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::core::KeyOps;
+    use std::sync::Mutex;
+
+    /// Serialises connection tests that touch the global CONFIG / STORE statics.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn setup_client() -> Client {
+        Client::new()
+    }
+
+    fn hash_pass(pass: &str) -> String {
+        Config::hash_password(pass).unwrap()
+    }
+
+    fn set_config_password(password: String) -> String {
+        let mut config = CONFIG.write();
+        let old = config.password.clone();
+        config.password = password;
+        old
+    }
+
+    fn reset_config_password(old: String) {
+        CONFIG.write().password = old;
+    }
+
+    fn reset_store() {
+        STORE.write().flushall().unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_ping() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let resp = process_command(&mut client, "PING").await;
+        assert_eq!(resp, "+PONG");
+    }
+
+    #[tokio::test]
+    async fn process_auth_no_password() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let old = set_config_password(String::new());
+        let resp = process_command(&mut client, "AUTH").await;
+        assert_eq!(resp, "+OK");
+        assert!(client.is_authenticated);
+        reset_config_password(old);
+    }
+
+    #[tokio::test]
+    async fn process_auth_correct_password() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let old = set_config_password(hash_pass("secret"));
+        let resp = process_command(&mut client, "AUTH secret").await;
+        assert_eq!(resp, "+OK");
+        assert!(client.is_authenticated);
+        reset_config_password(old);
+    }
+
+    #[tokio::test]
+    async fn process_auth_wrong_password() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let old = set_config_password(hash_pass("secret"));
+        let resp = process_command(&mut client, "AUTH wrongpass").await;
+        assert_eq!(resp, "-ERR invalid password");
+        assert!(!client.is_authenticated);
+        reset_config_password(old);
+    }
+
+    #[tokio::test]
+    async fn process_auth_missing_password_arg() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let old = set_config_password(hash_pass("secret"));
+        let resp = process_command(&mut client, "AUTH").await;
+        assert_eq!(resp, "-ERR wrong number of arguments for 'AUTH' command");
+        assert!(!client.is_authenticated);
+        reset_config_password(old);
+    }
+
+    #[tokio::test]
+    async fn process_noauth_blocks_command() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let old = set_config_password(hash_pass("secret"));
+        let resp = process_command(&mut client, "SET k v").await;
+        assert_eq!(resp, "-NOAUTH Authentication required");
+        assert!(!client.is_authenticated);
+        reset_config_password(old);
+    }
+
+    #[tokio::test]
+    async fn process_auth_then_command() {
+        let _guard = SERIAL.lock().unwrap();
+        let mut client = setup_client();
+        let old = set_config_password(hash_pass("secret"));
+        reset_store();
+
+        let auth_resp = process_command(&mut client, "AUTH secret").await;
+        assert_eq!(auth_resp, "+OK");
+        assert!(client.is_authenticated);
+
+        let set_resp = process_command(&mut client, "SET mykey myvalue").await;
+        assert_eq!(set_resp, "+OK");
+
+        let get_resp = process_command(&mut client, "GET mykey").await;
+        assert_eq!(get_resp, "myvalue");
+
+        reset_config_password(old);
+        reset_store();
     }
 }

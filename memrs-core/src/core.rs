@@ -71,7 +71,7 @@ pub trait SetOps {
     fn smembers(&self, key: String);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CacheValue {
     STR(String),
     List(VecDeque<String>),
@@ -97,6 +97,14 @@ impl Store {
     fn new(store: HashMap<String, CacheEntry>) -> Self {
         Self {
             data: store,
+            entry_expiries: HashMap::new(),
+            change_count: 0,
+        }
+    }
+
+    pub fn new_empty() -> Self {
+        Self {
+            data: HashMap::new(),
             entry_expiries: HashMap::new(),
             change_count: 0,
         }
@@ -417,6 +425,363 @@ pub static STORE: LazyLock<RwLock<Store>> = LazyLock::new(|| {
     let store_constructor = Store::new(store);
     RwLock::new(store_constructor)
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_store() -> Store {
+        Store::new_empty()
+    }
+
+    fn str_entry(v: &str) -> CacheEntry {
+        CacheEntry {
+            item: CacheValue::STR(v.into()),
+            ttl: None,
+            created_at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn set_and_get() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        let got = store.get("k".into()).unwrap();
+        assert_eq!(got.item, CacheValue::STR("v".into()));
+    }
+
+    #[test]
+    fn get_nonexistent_returns_err() {
+        let store = make_store();
+        assert!(store.get("missing".into()).is_err());
+    }
+
+    #[test]
+    fn exists_returns_ok_for_existing_key() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        assert!(store.exists("k".into()).is_ok());
+    }
+
+    #[test]
+    fn exists_returns_err_for_missing_key() {
+        let store = make_store();
+        assert!(store.exists("missing".into()).is_err());
+    }
+
+    #[test]
+    fn del_removes_key() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        store.del("k".into()).unwrap();
+        assert!(store.get("k".into()).is_err());
+    }
+
+    #[test]
+    fn flushall_clears_all() {
+        let mut store = make_store();
+        store.set("k1".into(), str_entry("v1")).unwrap();
+        store.set("k2".into(), str_entry("v2")).unwrap();
+        store.flushall().unwrap();
+        assert!(store.get("k1".into()).is_err());
+        assert!(store.get("k2".into()).is_err());
+    }
+
+    #[test]
+    fn change_count_increments_on_write() {
+        let mut store = make_store();
+        assert_eq!(store.change_count(), 0);
+        store.set("k".into(), str_entry("v")).unwrap();
+        assert_eq!(store.change_count(), 1);
+        store.del("k".into()).unwrap();
+        assert_eq!(store.change_count(), 2);
+    }
+
+    #[test]
+    fn hset_and_hget() {
+        let mut store = make_store();
+        store.hset("h".into(), "f1".into(), "v1".into()).unwrap();
+        let val = store.hget("h".into(), "f1".into()).unwrap();
+        assert_eq!(val, "v1");
+    }
+
+    #[test]
+    fn hget_nonexistent_field_returns_err() {
+        let mut store = make_store();
+        store.hset("h".into(), "f1".into(), "v1".into()).unwrap();
+        assert!(store.hget("h".into(), "missing".into()).is_err());
+    }
+
+    #[test]
+    fn hset_type_mismatch_returns_err() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        assert!(store.hset("k".into(), "f".into(), "v".into()).is_err());
+    }
+
+    #[test]
+    fn lpush_and_lpop() {
+        let mut store = make_store();
+        store.lpush("l".into(), "a".into()).unwrap();
+        store.lpush("l".into(), "b".into()).unwrap();
+        assert_eq!(store.lpop("l".into()).unwrap(), "b");
+        assert_eq!(store.lpop("l".into()).unwrap(), "a");
+    }
+
+    #[test]
+    fn rpush_and_rpop() {
+        let mut store = make_store();
+        store.rpush("l".into(), "a".into()).unwrap();
+        store.rpush("l".into(), "b".into()).unwrap();
+        assert_eq!(store.rpop("l".into()).unwrap(), "b");
+        assert_eq!(store.rpop("l".into()).unwrap(), "a");
+    }
+
+    #[test]
+    fn lpop_empty_list_returns_err() {
+        let mut store = make_store();
+        store.lpush("l".into(), "a".into()).unwrap();
+        store.lpop("l".into()).unwrap();
+        assert!(store.lpop("l".into()).is_err());
+    }
+
+    #[test]
+    fn rpop_empty_list_returns_err() {
+        let mut store = make_store();
+        store.rpush("l".into(), "a".into()).unwrap();
+        store.rpop("l".into()).unwrap();
+        assert!(store.rpop("l".into()).is_err());
+    }
+
+    #[test]
+    fn list_type_mismatch_returns_err() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        assert!(store.lpush("k".into(), "x".into()).is_err());
+        assert!(store.lpop("k".into()).is_err());
+    }
+
+    #[test]
+    fn hash_type_mismatch_returns_err() {
+        let mut store = make_store();
+        store.lpush("k".into(), "x".into()).unwrap();
+        assert!(store.hget("k".into(), "f".into()).is_err());
+    }
+
+    #[test]
+    fn expire_sets_ttl_on_existing_key() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        store
+            .execute(ReplCommands::EXPIRE("k".into(), 9999))
+            .unwrap();
+        assert!(store.entry_expiries.contains_key("k"));
+    }
+
+    #[test]
+    fn expire_nonexistent_key_returns_err() {
+        let mut store = make_store();
+        let result = store.execute(ReplCommands::EXPIRE("missing".into(), 10));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn check_expiry_removes_expired_entry() {
+        let mut store = make_store();
+        let past = Instant::now() - Duration::from_secs(10);
+        store
+            .data
+            .insert("k".into(), str_entry("v"));
+        store.data.get_mut("k").unwrap().ttl = Some(past);
+        store.entry_expiries.insert("k".into(), past);
+        store.check_expiry("k");
+        assert!(!store.data.contains_key("k"));
+    }
+
+    #[test]
+    fn check_expiry_does_not_remove_fresh_entry() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        store.check_expiry("k");
+        assert!(store.data.contains_key("k"));
+    }
+
+    #[test]
+    fn purge_expired_removes_all_expired() {
+        let mut store = make_store();
+        let past = Instant::now() - Duration::from_secs(10);
+        let future = Instant::now() + Duration::from_secs(9999);
+        store.data.insert("expired".into(), CacheEntry {
+            item: CacheValue::STR("x".into()),
+            ttl: Some(past),
+            created_at: Instant::now(),
+        });
+        store.entry_expiries.insert("expired".into(), past);
+        store.data.insert("fresh".into(), CacheEntry {
+            item: CacheValue::STR("y".into()),
+            ttl: Some(future),
+            created_at: Instant::now(),
+        });
+        store.entry_expiries.insert("fresh".into(), future);
+        store.purge_expired();
+        assert!(!store.data.contains_key("expired"));
+        assert!(store.data.contains_key("fresh"));
+    }
+
+    #[test]
+    fn execute_ping() {
+        let mut store = make_store();
+        let resp = store.execute(ReplCommands::PING).unwrap();
+        assert_eq!(resp, "+PONG");
+    }
+
+    #[test]
+    fn execute_set_and_get() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::SET("k".into(), "v".into(), None))
+            .unwrap();
+        let resp = store.execute(ReplCommands::GET("k".into())).unwrap();
+        assert_eq!(resp, "v");
+    }
+
+    #[test]
+    fn execute_set_with_ttl_then_get() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::SET("k".into(), "v".into(), Some(9999)))
+            .unwrap();
+        let resp = store.execute(ReplCommands::GET("k".into())).unwrap();
+        assert_eq!(resp, "v");
+        assert!(store.entry_expiries.contains_key("k"));
+    }
+
+    #[test]
+    fn execute_get_nonexistent() {
+        let mut store = make_store();
+        let resp = store.execute(ReplCommands::GET("missing".into()));
+        assert!(resp.is_err());
+    }
+
+    #[test]
+    fn execute_del() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::SET("k".into(), "v".into(), None))
+            .unwrap();
+        store.execute(ReplCommands::DEL("k".into())).unwrap();
+        assert!(store.execute(ReplCommands::GET("k".into())).is_err());
+    }
+
+    #[test]
+    fn execute_exists() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::SET("k".into(), "v".into(), None))
+            .unwrap();
+        store.execute(ReplCommands::EXISTS("k".into())).unwrap();
+        assert!(store
+            .execute(ReplCommands::EXISTS("missing".into()))
+            .is_err());
+    }
+
+    #[test]
+    fn execute_flushall() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::SET("k".into(), "v".into(), None))
+            .unwrap();
+        store.execute(ReplCommands::FLUSHALL).unwrap();
+        assert!(store.execute(ReplCommands::GET("k".into())).is_err());
+    }
+
+    #[test]
+    fn execute_hset_hget() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::HSET("h".into(), "f".into(), "v".into()))
+            .unwrap();
+        let val = store
+            .execute(ReplCommands::HGET("h".into(), "f".into()))
+            .unwrap();
+        assert_eq!(val, "v");
+    }
+
+    #[test]
+    fn execute_lpush_lpop() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::LPUSH("l".into(), "a".into()))
+            .unwrap();
+        store
+            .execute(ReplCommands::LPUSH("l".into(), "b".into()))
+            .unwrap();
+        let val = store.execute(ReplCommands::LPOP("l".into())).unwrap();
+        assert_eq!(val, String::from("b"));
+    }
+
+    #[test]
+    fn execute_rpush_rpop() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::RPUSH("l".into(), "a".into()))
+            .unwrap();
+        store
+            .execute(ReplCommands::RPUSH("l".into(), "b".into()))
+            .unwrap();
+        let val = store.execute(ReplCommands::RPOP("l".into())).unwrap();
+        assert_eq!(val, String::from("b"));
+    }
+
+    #[test]
+    fn execute_listall_empty() {
+        let mut store = make_store();
+        let resp = store
+            .execute(ReplCommands::LISTALL(None))
+            .unwrap();
+        assert!(resp.contains("0 keys"));
+    }
+
+    #[test]
+    fn execute_listall_with_entries() {
+        let mut store = make_store();
+        store
+            .execute(ReplCommands::SET("a".into(), "1".into(), None))
+            .unwrap();
+        store
+            .execute(ReplCommands::SET("b".into(), "2".into(), None))
+            .unwrap();
+        let resp = store.execute(ReplCommands::LISTALL(None)).unwrap();
+        assert!(resp.contains("2 keys"));
+        assert!(resp.contains("a") || resp.contains("b"));
+    }
+
+    #[test]
+    fn execute_listall_pagination() {
+        let mut store = make_store();
+        for i in 0..15 {
+            let k = format!("k{}", i);
+            store
+                .execute(ReplCommands::SET(k, "v".into(), None))
+                .unwrap();
+        }
+        let page1 = store.execute(ReplCommands::LISTALL(Some(1))).unwrap();
+        let page2 = store.execute(ReplCommands::LISTALL(Some(2))).unwrap();
+        assert!(page1.contains("Page 1"));
+        assert!(page2.contains("Page 2"));
+    }
+
+    #[test]
+    fn load_from_snapshot_resets_change_count() {
+        let mut store = make_store();
+        store.set("k".into(), str_entry("v")).unwrap();
+        assert_eq!(store.change_count(), 1);
+        let data = store.data().clone();
+        store.load_from_snapshot(data);
+        assert_eq!(store.change_count(), 0);
+        assert!(store.data.contains_key("k"));
+    }
+}
 
 pub async fn start_expiry_worker() {
     let mut tick = tokio::time::interval(Duration::from_millis(100));
