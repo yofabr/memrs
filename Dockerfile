@@ -23,5 +23,6 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/memrs-core/target/release/memrs /usr/local/bin/memrs
 COPY --from=builder /app/memrs-cli/target/release/memrs-cli /usr/local/bin/memrs-cli
+WORKDIR /data
 EXPOSE 7898
 CMD ["memrs"]

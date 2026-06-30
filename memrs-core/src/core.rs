@@ -90,6 +90,7 @@ pub struct CacheEntry {
 pub struct Store {
     data: HashMap<String, CacheEntry>,
     entry_expiries: HashMap<String, Instant>,
+    change_count: u64,
 }
 
 impl Store {
@@ -97,7 +98,12 @@ impl Store {
         Self {
             data: store,
             entry_expiries: HashMap::new(),
+            change_count: 0,
         }
+    }
+
+    pub fn change_count(&self) -> u64 {
+        self.change_count
     }
 
     fn check_expiry(&mut self, key: &str) {
@@ -109,6 +115,34 @@ impl Store {
                 }
             }
         }
+    }
+
+    pub fn purge_expired(&mut self) {
+        let expired: Vec<String> = self
+            .entry_expiries
+            .iter()
+            .filter(|(_, deadline)| Instant::now() >= **deadline)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in expired {
+            self.data.remove(&key);
+            self.entry_expiries.remove(&key);
+        }
+    }
+
+    pub fn data(&self) -> &HashMap<String, CacheEntry> {
+        &self.data
+    }
+
+    pub fn load_from_snapshot(&mut self, data: HashMap<String, CacheEntry>) {
+        self.data = data;
+        self.entry_expiries.clear();
+        for (key, entry) in &self.data {
+            if let Some(deadline) = entry.ttl {
+                self.entry_expiries.insert(key.clone(), deadline);
+            }
+        }
+        self.change_count = 0;
     }
 }
 
@@ -183,6 +217,7 @@ impl Store {
                 if let Some(entry) = self.data.get_mut(&key) {
                     entry.ttl = Some(deadline);
                     self.entry_expiries.insert(key, deadline);
+                    self.change_count += 1;
                     Ok("+OK".to_string())
                 } else {
                     Err(eyre!("No records have been found"))
@@ -234,6 +269,7 @@ impl Store {
 impl BasicOps for Store {
     fn set(&mut self, key: String, value: CacheEntry) -> Result<()> {
         self.data.insert(key, value);
+        self.change_count += 1;
         Ok(())
     }
 
@@ -260,12 +296,14 @@ impl KeyOps for Store {
     fn del(&mut self, key: String) -> Result<()> {
         self.data.remove(&key);
         self.entry_expiries.remove(&key);
+        self.change_count += 1;
         Ok(())
     }
 
     fn flushall(&mut self) -> Result<()> {
         self.data.clear();
         self.entry_expiries.clear();
+        self.change_count += 1;
         Ok(())
     }
 }
@@ -280,6 +318,7 @@ impl ListOps for Store {
         match &mut entry.item {
             CacheValue::List(list) => {
                 list.push_front(value);
+                self.change_count += 1;
                 Ok(())
             }
             _ => Err(eyre!("Key is not a list")),
@@ -295,6 +334,7 @@ impl ListOps for Store {
         match &mut entry.item {
             CacheValue::List(list) => {
                 list.push_back(value);
+                self.change_count += 1;
                 Ok(())
             }
             _ => Err(eyre!("Key is not a list")),
@@ -305,7 +345,13 @@ impl ListOps for Store {
         let entry = self.data.get_mut(&key);
         match entry {
             Some(entry) => match &mut entry.item {
-                CacheValue::List(list) => list.pop_front().ok_or_else(|| eyre!("List is empty")),
+                CacheValue::List(list) => {
+                    let val = list.pop_front().ok_or_else(|| eyre!("List is empty"));
+                    if val.is_ok() {
+                        self.change_count += 1;
+                    }
+                    val
+                }
                 _ => Err(eyre!("Key is not a list")),
             },
             None => Err(eyre!("No records have been found")),
@@ -316,7 +362,13 @@ impl ListOps for Store {
         let entry = self.data.get_mut(&key);
         match entry {
             Some(entry) => match &mut entry.item {
-                CacheValue::List(list) => list.pop_back().ok_or_else(|| eyre!("List is empty")),
+                CacheValue::List(list) => {
+                    let val = list.pop_back().ok_or_else(|| eyre!("List is empty"));
+                    if val.is_ok() {
+                        self.change_count += 1;
+                    }
+                    val
+                }
                 _ => Err(eyre!("Key is not a list")),
             },
             None => Err(eyre!("No records have been found")),
@@ -338,6 +390,7 @@ impl HashOps for Store {
         match &mut entry.item {
             CacheValue::Map(map) => {
                 map.insert(field, value);
+                self.change_count += 1;
                 Ok(())
             }
             _ => Err(eyre!("Key is not a hash")),

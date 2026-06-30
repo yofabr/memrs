@@ -6,6 +6,7 @@ use tokio::{
 
 use crate::core::{start_expiry_worker, CONFIG, STORE};
 use crate::repl::ReplCommands;
+use crate::snapshot;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientType {
@@ -33,8 +34,10 @@ pub async fn init_listener() -> Result<()> {
     let address = format!("0.0.0.0:{}", port_number);
     let listener = TcpListener::bind(&address).await?;
 
+    snapshot::try_load_at_startup();
     println!("[INFO] Started TcpListener at: {}", &address);
     tokio::spawn(async { start_expiry_worker().await });
+    tokio::spawn(async { snapshot::start_snapshot_worker().await });
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {

@@ -7,3 +7,8 @@ services:
     environment:
       - PORT=7898
       - PASSWORD=
+    volumes:
+      - memrs_data:/data
+
+volumes:
+  memrs_data:
