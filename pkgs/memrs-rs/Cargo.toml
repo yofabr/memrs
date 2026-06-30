@@ -1,6 +1,13 @@
 [package]
 name = "memrs-rs"
 version = "0.1.0"
+description = "Comprehensive Rust client for memrs — an in-memory data store with Redis-compatible commands"
+authors = ["memrs"]
+license = "MIT"
 edition = "2024"
+repository = "https://github.com/yofabr/memrs"
+keywords = ["memrs", "cache", "in-memory", "database", "client"]
+categories = ["database", "caching"]
 
 [dependencies]
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
