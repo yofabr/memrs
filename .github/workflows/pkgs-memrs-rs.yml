@@ -1,0 +1,30 @@
+name: pkgs/memrs-rs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pkgs/memrs-rs/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pkgs/memrs-rs/**'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkgs/memrs-rs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pkgs/memrs-rs
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+      - run: cargo clippy -- -D warnings
