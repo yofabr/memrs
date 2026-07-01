@@ -6,7 +6,7 @@ description = "A RESP-compatible CLI client for memrs, the in-memory key-value d
 license = "MIT"
 repository = "https://github.com/yofabr/memrs"
 keywords = ["redis", "cache", "cli", "key-value", "database"]
-categories = ["command-line-utilities", "database-interfaces"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 tokio = { version = "1.52.3", features = ["full"] }
