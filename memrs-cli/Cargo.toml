@@ -2,6 +2,11 @@
 name = "memrs-cli"
 version = "0.1.0"
 edition = "2024"
+description = "A RESP-compatible CLI client for memrs, the in-memory key-value data store server."
+license = "MIT"
+repository = "https://github.com/yofabr/memrs"
+keywords = ["redis", "cache", "cli", "key-value", "database"]
+categories = ["command-line-utilities", "database-interfaces"]
 
 [dependencies]
 tokio = { version = "1.52.3", features = ["full"] }
