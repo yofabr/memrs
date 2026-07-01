@@ -1,0 +1,28 @@
+name: Publish memrs-rs
+
+on:
+  push:
+    tags:
+      - memrs-rs-v*
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+        working-directory: pkgs/memrs-rs
+      - run: cargo test --release
+        working-directory: pkgs/memrs-rs
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish
+        working-directory: pkgs/memrs-rs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
