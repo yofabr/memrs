@@ -40,12 +40,20 @@ impl Client {
     pub async fn connect(addr: &str) -> Result<Self> {
         let stream = TcpStream::connect(addr).await?;
         let (reader, writer) = tokio::io::split(stream);
-        Ok(Self {
+        let mut client = Self {
             writer,
             reader: BufReader::new(reader),
             addr: addr.to_owned(),
             authenticated: false,
-        })
+        };
+        // Probe: if the server has no password configured, an AUTH
+        // command with no arguments succeeds and marks us authenticated.
+        if let Ok(resp) = client.run_command("AUTH").await {
+            if resp == "+OK" {
+                client.authenticated = true;
+            }
+        }
+        Ok(client)
     }
 
     /// Connect **and** authenticate in a single call.
@@ -313,12 +321,32 @@ mod tests {
     use tokio::net::TcpListener;
 
     /// Create a real TCP pair in the same process so we can mock the server.
+    /// Handles the AUTH probe that `Client::connect` now sends.
     async fn fake_server() -> (Client, tokio::net::TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
+            let (mut stream, _) = listener.accept().await.unwrap();
+            // Consume the AUTH probe sent by Client::connect
+            let mut buf = Vec::new();
+            loop {
+                let mut byte = [0u8; 1];
+                stream.read(&mut byte).await.unwrap();
+                buf.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            let cmd = std::str::from_utf8(&buf).unwrap().trim();
+            // Simulate a server that requires authentication:
+            // the probe gets -ERR, the client stays unauthenticated.
+            if cmd == "AUTH" {
+                stream
+                    .write_all(b"-ERR wrong number of arguments for 'AUTH' command\r\n")
+                    .await
+                    .unwrap();
+            }
             stream
         });
 
