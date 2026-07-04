@@ -1,6 +1,6 @@
 use color_eyre::Result;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::{TcpListener, TcpStream},
 };
 
@@ -49,8 +49,10 @@ pub async fn init_listener() -> Result<()> {
 }
 
 pub async fn handle_connection(mut stream: TcpStream) -> Result<()> {
+    stream.set_nodelay(true)?;
     let mut client = Client::new();
-    let (reader, mut writer) = stream.split();
+    let (reader, writer) = stream.split();
+    let mut writer = BufWriter::new(writer);
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
 
@@ -69,6 +71,7 @@ pub async fn handle_connection(mut stream: TcpStream) -> Result<()> {
         let response = process_command(&mut client, cmd).await;
         writer.write_all(response.as_bytes()).await?;
         writer.write_all(b"\r\n").await?;
+        writer.flush().await?;
     }
 
     Ok(())
