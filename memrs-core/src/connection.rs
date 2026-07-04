@@ -105,10 +105,26 @@ pub(crate) async fn process_command(client: &mut Client, cmd: &str) -> String {
                 return "-NOAUTH Authentication required".to_string();
             }
             match ReplCommands::parse_command(cmd.to_string()) {
-                Ok(parsed) => match STORE.write().execute(parsed) {
-                    Ok(response) => response,
-                    Err(e) => format!("-ERR {}", e),
-                },
+                Ok(parsed) => {
+                    let is_read = matches!(
+                        parsed,
+                        ReplCommands::GET(_)
+                            | ReplCommands::EXISTS(_)
+                            | ReplCommands::HGET(_, _)
+                            | ReplCommands::LISTALL(_)
+                    );
+                    if is_read {
+                        match STORE.read().execute_read(parsed) {
+                            Ok(response) => response,
+                            Err(e) => format!("-ERR {}", e),
+                        }
+                    } else {
+                        match STORE.write().execute(parsed) {
+                            Ok(response) => response,
+                            Err(e) => format!("-ERR {}", e),
+                        }
+                    }
+                }
                 Err(e) => format!("-ERR {}", e),
             }
         }

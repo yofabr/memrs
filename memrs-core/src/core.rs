@@ -86,6 +86,12 @@ pub struct CacheEntry {
     pub created_at: Instant,
 }
 
+impl CacheEntry {
+    pub fn is_expired(&self) -> bool {
+        self.ttl.map_or(false, |deadline| Instant::now() >= deadline)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Store {
     data: HashMap<String, CacheEntry>,
@@ -155,6 +161,79 @@ impl Store {
 }
 
 impl Store {
+    /// Execute a read-only command under a read lock.
+    pub fn execute_read(&self, command: ReplCommands) -> Result<String> {
+        match command {
+            ReplCommands::GET(key) => {
+                match self.data.get(&key) {
+                    Some(entry) if entry.is_expired() => Err(eyre!("No records have been found")),
+                    Some(entry) => match &entry.item {
+                        CacheValue::STR(s) => Ok(s.clone()),
+                        other => Ok(format!("{:?}", other)),
+                    },
+                    None => Err(eyre!("No records have been found")),
+                }
+            }
+            ReplCommands::EXISTS(key) => {
+                match self.data.get(&key) {
+                    Some(entry) if entry.is_expired() => Err(eyre!("No key found!")),
+                    Some(_) => Ok("+OK".to_string()),
+                    None => Err(eyre!("No key found!")),
+                }
+            }
+            ReplCommands::HGET(key, field) => {
+                match self.data.get(&key) {
+                    Some(entry) if entry.is_expired() => Err(eyre!("No records have been found")),
+                    Some(entry) => match &entry.item {
+                        CacheValue::Map(map) => map
+                            .get(&field)
+                            .cloned()
+                            .ok_or_else(|| eyre!("Field not found")),
+                        _ => Err(eyre!("Key is not a hash")),
+                    },
+                    None => Err(eyre!("No records have been found")),
+                }
+            }
+            ReplCommands::LISTALL(page) => {
+                let page = page.unwrap_or(1).max(1);
+                let limit = 10;
+                let mut entries: Vec<(&String, &CacheEntry)> = self.data.iter().collect();
+                entries.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+                let total = entries.len();
+                let total_pages = total.div_ceil(limit).max(1);
+                let start = (page - 1) * limit;
+                let batch: Vec<&(&String, &CacheEntry)> =
+                    entries.iter().skip(start).take(limit).collect();
+
+                if batch.is_empty() {
+                    Ok(format!("+0 keys (Page {}/{})", page, total_pages))
+                } else {
+                    let items: Vec<String> = batch
+                        .iter()
+                        .map(|(k, v)| {
+                            let type_str = match &v.item {
+                                CacheValue::STR(_) => "STRING".to_string(),
+                                CacheValue::List(l) => format!("LIST[{}]", l.len()),
+                                CacheValue::SET(s) => format!("SET[{}]", s.len()),
+                                CacheValue::Map(m) => format!("HASH[{}]", m.len()),
+                            };
+                            format!("{} ({})", k, type_str)
+                        })
+                        .collect();
+                    Ok(format!(
+                        "+{} keys (Page {}/{}): {}",
+                        total,
+                        page,
+                        total_pages,
+                        items.join(", ")
+                    ))
+                }
+            }
+            _ => Err(eyre!("not a read-only command")),
+        }
+    }
+
+    /// Execute a command that may mutate the store (write lock required).
     pub fn execute(&mut self, command: ReplCommands) -> Result<String> {
         match command {
             ReplCommands::GET(key) => {
