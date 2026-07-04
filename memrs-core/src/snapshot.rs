@@ -69,7 +69,7 @@ fn snapshot_to_cache_value(snap: &SnapshotValue) -> CacheValue {
     }
 }
 
-pub fn save_snapshot(store_data: &HashMap<String, CacheEntry>, path: &Path) -> Result<()> {
+pub async fn save_snapshot(store_data: &HashMap<String, CacheEntry>, path: &Path) -> Result<()> {
     let inst_now = Instant::now();
     let sys_now = SystemTime::now();
     let mut entries = HashMap::with_capacity(store_data.len());
@@ -99,7 +99,8 @@ pub fn save_snapshot(store_data: &HashMap<String, CacheEntry>, path: &Path) -> R
     let snapshot = Snapshot { entries };
     let encoded = bincode::serialize(&snapshot)
         .map_err(|e| eyre!("Failed to serialize snapshot: {}", e))?;
-    std::fs::write(path, encoded)
+    tokio::fs::write(path, encoded)
+        .await
         .map_err(|e| eyre!("Failed to write snapshot file: {}", e))?;
 
     Ok(())
@@ -200,12 +201,12 @@ mod tests {
         }
     }
 
-    fn roundtrip(entries: HashMap<String, CacheEntry>) {
+    async fn roundtrip(entries: HashMap<String, CacheEntry>) {
         let dir = std::env::temp_dir().join(format!("memrs_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("snapshot.bin");
 
-        save_snapshot(&entries, &path).unwrap();
+        save_snapshot(&entries, &path).await.unwrap();
         let loaded = load_snapshot(&path).unwrap();
 
         assert_eq!(entries.len(), loaded.len());
@@ -218,39 +219,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn snapshot_string() {
+    #[tokio::test]
+    async fn snapshot_string() {
         let mut map = HashMap::new();
         map.insert("k".into(), make_entry(CacheValue::STR("hello".into()), None));
-        roundtrip(map);
+        roundtrip(map).await;
     }
 
-    #[test]
-    fn snapshot_list() {
+    #[tokio::test]
+    async fn snapshot_list() {
         let mut map = HashMap::new();
         let list = CacheValue::List(VecDeque::from(["a".into(), "b".into(), "c".into()]));
         map.insert("k".into(), make_entry(list, None));
-        roundtrip(map);
+        roundtrip(map).await;
     }
 
-    #[test]
-    fn snapshot_set() {
+    #[tokio::test]
+    async fn snapshot_set() {
         let mut map = HashMap::new();
         let set = CacheValue::SET(HashSet::from(["x".into(), "y".into()]));
         map.insert("k".into(), make_entry(set, None));
-        roundtrip(map);
+        roundtrip(map).await;
     }
 
-    #[test]
-    fn snapshot_hash() {
+    #[tokio::test]
+    async fn snapshot_hash() {
         let mut map = HashMap::new();
         let hash = CacheValue::Map(HashMap::from([("f1".into(), "v1".into())]));
         map.insert("k".into(), make_entry(hash, None));
-        roundtrip(map);
+        roundtrip(map).await;
     }
 
-    #[test]
-    fn snapshot_multiple_types() {
+    #[tokio::test]
+    async fn snapshot_multiple_types() {
         let mut map = HashMap::new();
         map.insert("s".into(), make_entry(CacheValue::STR("str".into()), None));
         map.insert(
@@ -261,16 +262,16 @@ mod tests {
             CacheValue::Map(HashMap::from([("f".into(), "v".into())])),
             None,
         ));
-        roundtrip(map);
+        roundtrip(map).await;
     }
 
-    #[test]
-    fn snapshot_empty() {
-        roundtrip(HashMap::new());
+    #[tokio::test]
+    async fn snapshot_empty() {
+        roundtrip(HashMap::new()).await;
     }
 
-    #[test]
-    fn load_skips_expired_entries() {
+    #[tokio::test]
+    async fn load_skips_expired_entries() {
         let dir = std::env::temp_dir().join(format!("memrs_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("expired.bin");
@@ -287,7 +288,7 @@ mod tests {
             make_entry(CacheValue::STR("gone".into()), Some(past)),
         );
 
-        save_snapshot(&map, &path).unwrap();
+        save_snapshot(&map, &path).await.unwrap();
         let loaded = load_snapshot(&path).unwrap();
 
         assert!(loaded.contains_key("fresh"));
@@ -312,7 +313,7 @@ pub async fn start_snapshot_worker() {
 
         let data = STORE.read().data().clone();
 
-        if let Err(e) = save_snapshot(&data, &path) {
+        if let Err(e) = save_snapshot(&data, &path).await {
             eprintln!("[ERROR] Snapshot failed: {}", e);
         } else {
             last_count = current_count;
