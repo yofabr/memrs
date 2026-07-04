@@ -310,11 +310,7 @@ pub async fn start_snapshot_worker() {
             continue;
         }
 
-        let data = {
-            let mut store = STORE.write();
-            store.purge_expired();
-            store.data().clone()
-        };
+        let data = STORE.read().data().clone();
 
         if let Err(e) = save_snapshot(&data, &path) {
             eprintln!("[ERROR] Snapshot failed: {}", e);
