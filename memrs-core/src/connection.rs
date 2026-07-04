@@ -57,20 +57,34 @@ pub async fn handle_connection(mut stream: TcpStream) -> Result<()> {
     let mut line = String::new();
 
     loop {
+        // Read one command; this may perform a syscall to fill the buffer.
         line.clear();
         let bytes_read = buf_reader.read_line(&mut line).await?;
         if bytes_read == 0 {
             break;
         }
-
-        let cmd = line.trim();
+        let cmd = line.trim().to_owned();
         if cmd.is_empty() {
             continue;
         }
-
-        let response = process_command(&mut client, cmd).await;
+        let response = process_command(&mut client, &cmd).await;
         writer.write_all(response.as_bytes()).await?;
         writer.write_all(b"\r\n").await?;
+
+        // Drain any additional pipelined commands already in the buffer
+        // (no syscall — the first read_line pulled them all from the kernel).
+        while buf_reader.buffer().contains(&b'\n') {
+            line.clear();
+            buf_reader.read_line(&mut line).await?;
+            let cmd = line.trim().to_owned();
+            if cmd.is_empty() {
+                continue;
+            }
+            let response = process_command(&mut client, &cmd).await;
+            writer.write_all(response.as_bytes()).await?;
+            writer.write_all(b"\r\n").await?;
+        }
+
         writer.flush().await?;
     }
 
