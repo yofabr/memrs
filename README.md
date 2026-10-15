@@ -1,18 +1,10 @@
 # memrs
 
-An in-memory key-value data store built from scratch in Rust. 
-Designed as a lightweight Redis alternative focused on simplicity, minimal dependencies, and a clean codebase that's easy to understand and extend.
+An in-memory key-value data store written Rust. 
 
 Memrs started as a learning project to explore systems programming with async Rust, 
-but evolved into a functional caching layer with Redis-compatible commands, 
+but evolved into a functional lightweight key value pair database layer with Redis-compatible commands, 
 connection pooling, TTL-based expiry, and a RESP-compatible wire protocol.
-
-## Why memrs?
-
-Most caching solutions like Redis are battle-tested but complex — 
-their codebases are large, and embedding them in a Rust project isn't straightforward. 
-Memrs aims to be the opposite: small enough to read in one sitting, 
-with a client library (`memrs-rs`) that feels native to Rust's async ecosystem.
 
 ## Usage
 
